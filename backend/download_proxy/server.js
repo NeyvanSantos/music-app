@@ -17,23 +17,30 @@ const STORAGE_DIR = path.resolve(__dirname, process.env.STORAGE_DIR || './storag
 const FILES_DIR = path.join(STORAGE_DIR, 'files');
 const WORK_DIR = path.join(STORAGE_DIR, 'work');
 const CACHE_INDEX_PATH = path.join(STORAGE_DIR, 'cache-index.json');
+const RUNTIME_DIR = path.join(STORAGE_DIR, 'runtime');
 const YT_DLP_BIN = process.env.YT_DLP_BIN || 'yt-dlp';
 const YT_DLP_ARGS = splitCommandArgs(process.env.YT_DLP_ARGS || '');
 const YT_DLP_USER_AGENT =
   process.env.YT_DLP_USER_AGENT ||
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36';
+const YOUTUBE_COOKIES = process.env.YOUTUBE_COOKIES || '';
+const YOUTUBE_COOKIES_B64 = process.env.YOUTUBE_COOKIES_B64 || '';
+const YOUTUBE_COOKIES_PATH = process.env.YOUTUBE_COOKIES_PATH || '';
 const FFMPEG_BIN = process.env.FFMPEG_BIN || 'ffmpeg';
 const MAX_JOB_AGE_MINUTES = Number(process.env.MAX_JOB_AGE_MINUTES || 60);
 
 const jobs = new Map();
 const cacheIndex = new Map();
 let activeJobCount = 0;
+let ytDlpCookiesPath = '';
 
 async function bootstrap() {
   await Promise.all([
     fsp.mkdir(FILES_DIR, { recursive: true }),
     fsp.mkdir(WORK_DIR, { recursive: true }),
+    fsp.mkdir(RUNTIME_DIR, { recursive: true }),
   ]);
+  ytDlpCookiesPath = await ensureCookiesFile();
   await loadCacheIndex();
 
   const server = http.createServer(async (req, res) => {
@@ -52,7 +59,7 @@ async function bootstrap() {
   server.listen(PORT, HOST, () => {
     console.log(`[download-proxy] listening on ${HOST}:${PORT}`);
     console.log(
-      `[download-proxy] config baseUrl=${BASE_URL} storageDir=${STORAGE_DIR} ytDlpBin=${YT_DLP_BIN}`,
+      `[download-proxy] config baseUrl=${BASE_URL} storageDir=${STORAGE_DIR} ytDlpBin=${YT_DLP_BIN} cookies=${ytDlpCookiesPath ? 'enabled' : 'disabled'}`,
     );
   });
 
@@ -321,6 +328,7 @@ function updateJob(job, patch) {
 
 async function runYtDlp(youtubeId, outputTemplate, job) {
   const videoUrl = `https://www.youtube.com/watch?v=${youtubeId}`;
+  const cookieArgs = ytDlpCookiesPath ? ['--cookies', ytDlpCookiesPath] : [];
   const strategies = [
     {
       name: 'android-web',
@@ -358,6 +366,7 @@ async function runYtDlp(youtubeId, outputTemplate, job) {
         YT_DLP_BIN,
         [
           ...YT_DLP_ARGS,
+          ...cookieArgs,
           '--user-agent',
           YT_DLP_USER_AGENT,
           '--referer',
@@ -405,6 +414,24 @@ async function runYtDlp(youtubeId, outputTemplate, job) {
   }
 
   throw lastError || new Error('Falha ao baixar audio com yt-dlp.');
+}
+
+async function ensureCookiesFile() {
+  if (YOUTUBE_COOKIES_PATH) {
+    return YOUTUBE_COOKIES_PATH;
+  }
+
+  const rawCookies =
+    decodeBase64Value(YOUTUBE_COOKIES_B64) ||
+    normalizeCookiePayload(YOUTUBE_COOKIES);
+
+  if (!rawCookies) {
+    return '';
+  }
+
+  const cookiesPath = path.join(RUNTIME_DIR, 'youtube-cookies.txt');
+  await fsp.writeFile(cookiesPath, rawCookies, 'utf8');
+  return cookiesPath;
 }
 
 function runFfmpeg(inputPath, outputPath) {
@@ -689,6 +716,28 @@ function splitCommandArgs(input) {
     }
     return part;
   });
+}
+
+function decodeBase64Value(input) {
+  const value = String(input || '').trim();
+  if (!value) {
+    return '';
+  }
+
+  try {
+    return Buffer.from(value, 'base64').toString('utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
+function normalizeCookiePayload(input) {
+  const value = String(input || '').trim();
+  if (!value) {
+    return '';
+  }
+
+  return value.replace(/\\n/g, '\n').trim();
 }
 
 class HttpError extends Error {

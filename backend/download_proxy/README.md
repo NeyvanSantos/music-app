@@ -72,6 +72,30 @@ FFMPEG_BIN=ffmpeg
 MAX_JOB_AGE_MINUTES=60
 ```
 
+### Cookies do YouTube no Railway
+
+Se alguns videos falharem com mensagens como `Sign in to confirm you're not a bot`, configure cookies no backend.
+
+Voce pode usar uma destas opcoes:
+
+```env
+YOUTUBE_COOKIES_PATH=/data/runtime/youtube-cookies.txt
+```
+
+ou, mais pratico no Railway, uma variavel com o conteudo do arquivo:
+
+```env
+YOUTUBE_COOKIES=conteudo-do-arquivo-cookies.txt
+```
+
+ou em Base64:
+
+```env
+YOUTUBE_COOKIES_B64=base64-do-arquivo-cookies.txt
+```
+
+O backend cria automaticamente um arquivo temporario de cookies quando `YOUTUBE_COOKIES` ou `YOUTUBE_COOKIES_B64` estiver configurado.
+
 ### Healthcheck
 
 - Endpoint: `/health`
