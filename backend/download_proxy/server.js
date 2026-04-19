@@ -275,7 +275,7 @@ async function processJob(job) {
 
   try {
     await fsp.mkdir(jobWorkDir, { recursive: true });
-    await runYtDlp(job.youtubeId, tempTemplate);
+    await runYtDlp(job.youtubeId, tempTemplate, job);
 
     const producedFiles = await fsp.readdir(jobWorkDir);
     const audioFileName = producedFiles.find((name) => name.startsWith('audio.'));
@@ -319,42 +319,92 @@ function updateJob(job, patch) {
   Object.assign(job, patch, { updatedAt: new Date().toISOString() });
 }
 
-function runYtDlp(youtubeId, outputTemplate) {
+async function runYtDlp(youtubeId, outputTemplate, job) {
   const videoUrl = `https://www.youtube.com/watch?v=${youtubeId}`;
-  return runCommand(
-    YT_DLP_BIN,
-    [
-      ...YT_DLP_ARGS,
-      '--user-agent',
-      YT_DLP_USER_AGENT,
-      '--referer',
-      'https://www.youtube.com/',
-      '--add-header',
-      'Accept-Language:en-US,en;q=0.9',
-      '--add-header',
-      'Origin:https://www.youtube.com',
-      '--extractor-args',
-      'youtube:player_client=android,web;player_skip=webpage,configs',
-      '--extractor-retries',
-      '5',
-      '--fragment-retries',
-      '5',
-      '--retries',
-      '5',
-      '--retry-sleep',
-      '2',
-      '--no-playlist',
-      '--no-warnings',
-      '--restrict-filenames',
-      '--no-check-certificates',
-      '--format',
-      'bestaudio/best',
-      '--output',
-      outputTemplate,
-      videoUrl,
-    ],
-    'Falha ao baixar audio com yt-dlp.',
-  );
+  const strategies = [
+    {
+      name: 'android-web',
+      args: [
+        '--extractor-args',
+        'youtube:player_client=android,web;player_skip=webpage,configs',
+      ],
+    },
+    {
+      name: 'ios-web',
+      args: [
+        '--extractor-args',
+        'youtube:player_client=ios,web;player_skip=webpage,configs',
+      ],
+    },
+    {
+      name: 'tv-android-web',
+      args: [
+        '--extractor-args',
+        'youtube:player_client=tv,android,web;player_skip=webpage,configs',
+      ],
+    },
+  ];
+
+  let lastError = null;
+
+  for (const strategy of strategies) {
+    try {
+      logEvent('yt-dlp-attempt', {
+        youtubeId,
+        jobId: job?.id || 'unknown',
+        strategy: strategy.name,
+      });
+      await runCommand(
+        YT_DLP_BIN,
+        [
+          ...YT_DLP_ARGS,
+          '--user-agent',
+          YT_DLP_USER_AGENT,
+          '--referer',
+          'https://www.youtube.com/',
+          '--add-header',
+          'Accept-Language:en-US,en;q=0.9',
+          '--add-header',
+          'Origin:https://www.youtube.com',
+          '--extractor-retries',
+          '5',
+          '--fragment-retries',
+          '5',
+          '--retries',
+          '5',
+          '--retry-sleep',
+          '2',
+          '--no-playlist',
+          '--no-warnings',
+          '--restrict-filenames',
+          '--no-check-certificates',
+          '--format',
+          'bestaudio/best',
+          ...strategy.args,
+          '--output',
+          outputTemplate,
+          videoUrl,
+        ],
+        `Falha ao baixar audio com yt-dlp [${strategy.name}].`,
+      );
+      logEvent('yt-dlp-success', {
+        youtubeId,
+        jobId: job?.id || 'unknown',
+        strategy: strategy.name,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      logEvent('yt-dlp-retry', {
+        youtubeId,
+        jobId: job?.id || 'unknown',
+        strategy: strategy.name,
+        error: normalizeErrorMessage(error),
+      });
+    }
+  }
+
+  throw lastError || new Error('Falha ao baixar audio com yt-dlp.');
 }
 
 function runFfmpeg(inputPath, outputPath) {
