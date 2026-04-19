@@ -19,6 +19,9 @@ const WORK_DIR = path.join(STORAGE_DIR, 'work');
 const CACHE_INDEX_PATH = path.join(STORAGE_DIR, 'cache-index.json');
 const YT_DLP_BIN = process.env.YT_DLP_BIN || 'yt-dlp';
 const YT_DLP_ARGS = splitCommandArgs(process.env.YT_DLP_ARGS || '');
+const YT_DLP_USER_AGENT =
+  process.env.YT_DLP_USER_AGENT ||
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36';
 const FFMPEG_BIN = process.env.FFMPEG_BIN || 'ffmpeg';
 const MAX_JOB_AGE_MINUTES = Number(process.env.MAX_JOB_AGE_MINUTES || 60);
 
@@ -48,6 +51,9 @@ async function bootstrap() {
 
   server.listen(PORT, HOST, () => {
     console.log(`[download-proxy] listening on ${HOST}:${PORT}`);
+    console.log(
+      `[download-proxy] config baseUrl=${BASE_URL} storageDir=${STORAGE_DIR} ytDlpBin=${YT_DLP_BIN}`,
+    );
   });
 
   setInterval(cleanupExpiredJobs, 10 * 60 * 1000).unref();
@@ -75,7 +81,7 @@ async function route(req, res) {
 
   if (method === 'GET' && pathname.startsWith('/downloads/')) {
     const jobId = decodeURIComponent(pathname.slice('/downloads/'.length));
-    return handleGetDownload(jobId, res);
+    return handleGetDownload(req, jobId, res);
   }
 
   if (method === 'GET' && pathname.startsWith('/files/')) {
@@ -181,11 +187,13 @@ async function handleCreateDownload(body, res) {
   });
 }
 
-function handleGetDownload(jobId, res) {
+function handleGetDownload(req, jobId, res) {
   const job = jobs.get(jobId);
   if (!job) {
     return sendJson(res, 404, { error: 'Job nao encontrado.' });
   }
+
+  const publicBaseUrl = resolvePublicBaseUrl(req);
 
   sendJson(res, 200, {
     jobId: job.id,
@@ -195,7 +203,9 @@ function handleGetDownload(jobId, res) {
     error: job.error,
     contentType: job.contentType,
     downloadUrl:
-      job.status === 'completed' ? `${BASE_URL}/files/${encodeURIComponent(job.outputFileName)}` : null,
+      job.status === 'completed'
+        ? `${publicBaseUrl}/files/${encodeURIComponent(job.outputFileName)}`
+        : null,
   });
 }
 
@@ -315,9 +325,28 @@ function runYtDlp(youtubeId, outputTemplate) {
     YT_DLP_BIN,
     [
       ...YT_DLP_ARGS,
+      '--user-agent',
+      YT_DLP_USER_AGENT,
+      '--referer',
+      'https://www.youtube.com/',
+      '--add-header',
+      'Accept-Language:en-US,en;q=0.9',
+      '--add-header',
+      'Origin:https://www.youtube.com',
+      '--extractor-args',
+      'youtube:player_client=android,web;player_skip=webpage,configs',
+      '--extractor-retries',
+      '5',
+      '--fragment-retries',
+      '5',
+      '--retries',
+      '5',
+      '--retry-sleep',
+      '2',
       '--no-playlist',
       '--no-warnings',
       '--restrict-filenames',
+      '--no-check-certificates',
       '--format',
       'bestaudio/best',
       '--output',
@@ -516,6 +545,26 @@ function sendJson(res, statusCode, payload) {
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
   });
   res.end(JSON.stringify(payload));
+}
+
+function resolvePublicBaseUrl(req) {
+  const forwardedProto = headerValue(req.headers['x-forwarded-proto']);
+  const forwardedHost = headerValue(req.headers['x-forwarded-host']);
+  const host = headerValue(req.headers.host);
+
+  if (forwardedHost || host) {
+    const protocol = forwardedProto || (host && host.startsWith('localhost') ? 'http' : 'https');
+    return `${protocol}://${forwardedHost || host}`.replace(/\/+$/, '');
+  }
+
+  return BASE_URL;
+}
+
+function headerValue(value) {
+  if (Array.isArray(value)) {
+    return value[0] || '';
+  }
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function sanitizeFileBaseName(input) {
