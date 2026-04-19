@@ -1,0 +1,47 @@
+{
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  },
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "appmusicaaa",
+          "appId": "1:457284911122:android:fe65ac4f927de99b6118cb",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "appmusicaaa",
+          "configurations": {
+            "android": "1:457284911122:android:fe65ac4f927de99b6118cb",
+            "web": "1:457284911122:web:67e792cb7ca2f2f46118cb",
+            "windows": "1:457284911122:web:c895de22d40ef6026118cb"
+          }
+        }
+      }
+    }
+  },
+  "auth": {
+    "providers": {
+      "anonymous": true,
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "Music App",
+        "supportEmail": "neyva@example.com"
+      }
+    }
+  },
+  "firestore": {
+    "database": "(default)",
+    "location": "nam5",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "somax-download-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend minimo para enfileirar downloads de audio e expor o arquivo pronto ao app.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

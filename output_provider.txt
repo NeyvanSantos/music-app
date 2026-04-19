@@ -1,0 +1,52 @@
+final genreTopSongsProvider = FutureProvider<Map<String, List<SongModel>>>((ref) async {
+  return {
+    'FUNK': [
+      SongModel(id: 'rIuKKV06CZA', title: 'NA RELÍQUIA DO 2T - MC Vine 7, MC Tuto, MC FR da Norte, MC Joãozinho VT, MC Dkzin (DJ Gu)', artist: 'Sonar Produtora ', thumbnailUrl: 'https://img.youtube.com/vi/rIuKKV06CZA/mqdefault.jpg', youtubeId: 'rIuKKV06CZA', source: SongSource.youtube),
+      SongModel(id: 'kI6ywewtYkc', title: 'Panda - Eu te seguro  [ Panda sem Moderação 2 ]', artist: 'Panda Cantor', thumbnailUrl: 'https://img.youtube.com/vi/kI6ywewtYkc/mqdefault.jpg', youtubeId: 'kI6ywewtYkc', source: SongSource.youtube),
+      SongModel(id: 'ODijwjs8Qvc', title: 'FAMOSO ÍMÃ  | O PODEROSO CHATÃO - MC\'s Lele JP,  Poze do Rodo e Leozinho ZS (DJ Gordinho da VF)', artist: 'MC Lele JP and Gringos World', thumbnailUrl: 'https://img.youtube.com/vi/ODijwjs8Qvc/mqdefault.jpg', youtubeId: 'ODijwjs8Qvc', source: SongSource.youtube),
+      SongModel(id: 'c70Dvo-LyM0', title: 'Amo Minha Favela - MC Meno K e DJ Japa NK (Video Clipe Oficial)', artist: 'MC MENO K', thumbnailUrl: 'https://img.youtube.com/vi/c70Dvo-LyM0/mqdefault.jpg', youtubeId: 'c70Dvo-LyM0', source: SongSource.youtube),
+      // Erro em: Gauchinha MC Ryan SP
+      // Erro em: Posso Até Não Te Dar Flores MC Ryan SP
+      // Erro em: Carnívoro MC Lele JP
+      // Erro em: Jetski Melody
+      // Erro em: Bola Uma Vela Trava Chip
+      // Erro em: Set do Japa NK 2.0 MC Ryan SP
+    ],
+    'PAGODE': [
+      // Erro em: Bebe E Vem Me Procurar Turma Do Pagode
+      // Erro em: Grau de Maluca Menos E Mais pagode
+      // Erro em: Pedindo a Conta Turma do Pagode
+      // Erro em: Fuso Horário Turma do Pagode
+      // Erro em: Jejum de Amor Menos E Mais
+      // Erro em: Amanhã Loucura do Seu Coração Sorriso Maroto
+      // Erro em: Me Olha Nos Olhos Sorriso Maroto
+      // Erro em: Quando Erro Contra Erro Grupo Menos E Mais
+      // Erro em: Amém para Nossa Amizade Vitinho
+      // Erro em: É Tarde Demais Estou Mal Sorriso Maroto
+    ],
+    'SERTANEJO': [
+      // Erro em: Saudade Do Carai Mari Fernandez
+      // Erro em: Bebe Beija E Trai Mayke Rodrigo
+      // Erro em: Calcinha de Renda Gusttavo Lima
+      // Erro em: Grau de Maluca Guilherme Benuto
+      // Erro em: Errado o Triplo Oh Perigo Diego Victor Hugo
+      // Erro em: Manda um Oi Guilherme Benuto
+      // Erro em: Olho Marrom Luan Santana
+      // Erro em: Vida de Cão Ponto Final Murilo Huff
+      // Erro em: Caminhonete Inteira Diego Arnaldo
+      // Erro em: Primeiro Passo Você de Volta Hugo Guilherme
+    ],
+    'POP': [
+      // Erro em: SWIM BTS
+      // Erro em: Loira Gelada Luísa Sonza
+      // Erro em: Jetski Pedro Sampaio Pop
+      // Erro em: Numa Ilha Marina Sena
+      // Erro em: Quando Você Se Foi Chorei DJ Topo
+      // Erro em: E agora Luísa Sonza Xamã
+      // Erro em: Impossível Raphaela Santos
+      // Erro em: De Todas As Coisas TIAGO IORC
+      // Erro em: G LATINA Pedro Sampaio
+      // Erro em: French Kiss Luísa Sonza
+    ],
+  };
+});

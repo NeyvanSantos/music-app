@@ -1,0 +1,605 @@
+'use strict';
+
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
+const http = require('node:http');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { spawn } = require('node:child_process');
+const { URL } = require('node:url');
+
+loadEnv(path.join(__dirname, '.env'));
+
+const PORT = Number(process.env.PORT || 8080);
+const HOST = process.env.HOST || '0.0.0.0';
+const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
+const STORAGE_DIR = path.resolve(__dirname, process.env.STORAGE_DIR || './storage');
+const FILES_DIR = path.join(STORAGE_DIR, 'files');
+const WORK_DIR = path.join(STORAGE_DIR, 'work');
+const CACHE_INDEX_PATH = path.join(STORAGE_DIR, 'cache-index.json');
+const YT_DLP_BIN = process.env.YT_DLP_BIN || 'yt-dlp';
+const YT_DLP_ARGS = splitCommandArgs(process.env.YT_DLP_ARGS || '');
+const FFMPEG_BIN = process.env.FFMPEG_BIN || 'ffmpeg';
+const MAX_JOB_AGE_MINUTES = Number(process.env.MAX_JOB_AGE_MINUTES || 60);
+
+const jobs = new Map();
+const cacheIndex = new Map();
+let activeJobCount = 0;
+
+async function bootstrap() {
+  await Promise.all([
+    fsp.mkdir(FILES_DIR, { recursive: true }),
+    fsp.mkdir(WORK_DIR, { recursive: true }),
+  ]);
+  await loadCacheIndex();
+
+  const server = http.createServer(async (req, res) => {
+    try {
+      await route(req, res);
+    } catch (error) {
+      if (error instanceof HttpError) {
+        sendJson(res, error.statusCode, { error: error.message });
+        return;
+      }
+      console.error('[download-proxy] unexpected error', error);
+      sendJson(res, 500, { error: 'Erro interno no backend de download.' });
+    }
+  });
+
+  server.listen(PORT, HOST, () => {
+    console.log(`[download-proxy] listening on ${HOST}:${PORT}`);
+  });
+
+  setInterval(cleanupExpiredJobs, 10 * 60 * 1000).unref();
+}
+
+async function route(req, res) {
+  const method = req.method || 'GET';
+  const requestUrl = new URL(req.url || '/', BASE_URL);
+  const pathname = requestUrl.pathname;
+
+  if (method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Content-Type',
+      'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    });
+    res.end();
+    return;
+  }
+
+  if (method === 'POST' && pathname === '/downloads') {
+    const body = await readJsonBody(req);
+    return handleCreateDownload(body, res);
+  }
+
+  if (method === 'GET' && pathname.startsWith('/downloads/')) {
+    const jobId = decodeURIComponent(pathname.slice('/downloads/'.length));
+    return handleGetDownload(jobId, res);
+  }
+
+  if (method === 'GET' && pathname.startsWith('/files/')) {
+    const fileName = decodeURIComponent(pathname.slice('/files/'.length));
+    return handleGetFile(fileName, res);
+  }
+
+  if (method === 'GET' && pathname === '/health') {
+    return sendJson(res, 200, {
+      ok: true,
+      activeJobs: activeJobCount,
+      totalJobs: jobs.size,
+    });
+  }
+
+  sendJson(res, 404, { error: 'Rota nao encontrada.' });
+}
+
+async function handleCreateDownload(body, res) {
+  const song =
+    body && typeof body === 'object' && body.song && typeof body.song === 'object'
+      ? body.song
+      : null;
+  if (!song) {
+    return sendJson(res, 400, { error: 'Payload deve conter song.' });
+  }
+
+  const youtubeId = song && typeof song.youtubeId === 'string' && song.youtubeId.trim()
+    ? song.youtubeId.trim()
+    : song && typeof song.id === 'string'
+      ? song.id.trim()
+      : '';
+
+  if (!youtubeId) {
+    return sendJson(res, 400, { error: 'youtubeId obrigatorio.' });
+  }
+
+  const activeJob = findReusableJob(youtubeId);
+  if (activeJob) {
+    logEvent('job-reused', {
+      youtubeId,
+      jobId: activeJob.id,
+      status: activeJob.status,
+    });
+    return sendJson(res, 202, {
+      jobId: activeJob.id,
+      status: activeJob.status,
+      cached: activeJob.status === 'completed',
+    });
+  }
+
+  const cachedEntry = await getValidCacheEntry(youtubeId);
+  if (cachedEntry) {
+    const cachedJob = createJob({
+      song,
+      youtubeId,
+      outputFileName: cachedEntry.outputFileName,
+      status: 'completed',
+      retainFile: true,
+      error: null,
+    });
+    jobs.set(cachedJob.id, cachedJob);
+    logEvent('cache-hit', {
+      youtubeId,
+      jobId: cachedJob.id,
+      file: cachedEntry.outputFileName,
+    });
+    return sendJson(res, 202, {
+      jobId: cachedJob.id,
+      status: cachedJob.status,
+      cached: true,
+    });
+  }
+
+  const outputFileName = buildOutputFileName(song, youtubeId);
+  logEvent('cache-miss', {
+    youtubeId,
+    file: outputFileName,
+  });
+  const job = createJob({
+    song,
+    youtubeId,
+    outputFileName,
+    status: 'queued',
+    retainFile: true,
+    error: null,
+  });
+
+  jobs.set(job.id, job);
+  logEvent('job-created', {
+    youtubeId,
+    jobId: job.id,
+    file: outputFileName,
+  });
+  processJob(job).catch((error) => {
+    console.error('[download-proxy] job failed', error);
+  });
+
+  sendJson(res, 202, {
+    jobId: job.id,
+    status: job.status,
+    cached: false,
+  });
+}
+
+function handleGetDownload(jobId, res) {
+  const job = jobs.get(jobId);
+  if (!job) {
+    return sendJson(res, 404, { error: 'Job nao encontrado.' });
+  }
+
+  sendJson(res, 200, {
+    jobId: job.id,
+    status: job.status,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    error: job.error,
+    contentType: job.contentType,
+    downloadUrl:
+      job.status === 'completed' ? `${BASE_URL}/files/${encodeURIComponent(job.outputFileName)}` : null,
+  });
+}
+
+function createJob({
+  song,
+  youtubeId,
+  outputFileName,
+  status,
+  retainFile,
+  error,
+}) {
+  const jobId = crypto.randomUUID();
+  return {
+    id: jobId,
+    status,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    youtubeId,
+    song: {
+      id: String(song.id || youtubeId),
+      title: String(song.title || 'Faixa sem nome'),
+      artist: String(song.artist || 'Artista desconhecido'),
+      thumbnailUrl: song.thumbnailUrl ? String(song.thumbnailUrl) : null,
+      youtubeId,
+    },
+    outputFileName,
+    outputPath: path.join(FILES_DIR, outputFileName),
+    error,
+    contentType: 'audio/mpeg',
+    retainFile,
+  };
+}
+
+async function handleGetFile(fileName, res) {
+  if (fileName.includes('/') || fileName.includes('\\')) {
+    return sendJson(res, 400, { error: 'Nome de arquivo invalido.' });
+  }
+
+  const filePath = path.join(FILES_DIR, fileName);
+
+  try {
+    await fsp.access(filePath, fs.constants.R_OK);
+  } catch {
+    return sendJson(res, 404, { error: 'Arquivo nao encontrado.' });
+  }
+
+  const stream = fs.createReadStream(filePath);
+  res.writeHead(200, {
+    'Content-Type': 'audio/mpeg',
+    'Content-Disposition': `attachment; filename="${fileName}"`,
+    'Cache-Control': 'private, max-age=3600',
+    'Access-Control-Allow-Origin': '*',
+  });
+  stream.pipe(res);
+}
+
+async function processJob(job) {
+  activeJobCount += 1;
+  updateJob(job, { status: 'processing' });
+  logEvent('job-processing', {
+    youtubeId: job.youtubeId,
+    jobId: job.id,
+  });
+
+  const jobWorkDir = path.join(WORK_DIR, job.id);
+  const tempTemplate = path.join(jobWorkDir, 'audio.%(ext)s');
+
+  try {
+    await fsp.mkdir(jobWorkDir, { recursive: true });
+    await runYtDlp(job.youtubeId, tempTemplate);
+
+    const producedFiles = await fsp.readdir(jobWorkDir);
+    const audioFileName = producedFiles.find((name) => name.startsWith('audio.'));
+    if (!audioFileName) {
+      throw new Error('yt-dlp nao gerou arquivo de audio.');
+    }
+
+    const tempAudioPath = path.join(jobWorkDir, audioFileName);
+    await runFfmpeg(tempAudioPath, job.outputPath);
+
+    cacheIndex.set(job.youtubeId, {
+      youtubeId: job.youtubeId,
+      outputFileName: job.outputFileName,
+      contentType: job.contentType,
+      updatedAt: new Date().toISOString(),
+    });
+    await saveCacheIndex();
+    updateJob(job, { status: 'completed' });
+    logEvent('job-completed', {
+      youtubeId: job.youtubeId,
+      jobId: job.id,
+      file: job.outputFileName,
+    });
+  } catch (error) {
+    updateJob(job, {
+      status: 'failed',
+      error: normalizeErrorMessage(error),
+    });
+    logEvent('job-failed', {
+      youtubeId: job.youtubeId,
+      jobId: job.id,
+      error: job.error,
+    });
+  } finally {
+    activeJobCount -= 1;
+    await fsp.rm(jobWorkDir, { recursive: true, force: true });
+  }
+}
+
+function updateJob(job, patch) {
+  Object.assign(job, patch, { updatedAt: new Date().toISOString() });
+}
+
+function runYtDlp(youtubeId, outputTemplate) {
+  const videoUrl = `https://www.youtube.com/watch?v=${youtubeId}`;
+  return runCommand(
+    YT_DLP_BIN,
+    [
+      ...YT_DLP_ARGS,
+      '--no-playlist',
+      '--no-warnings',
+      '--restrict-filenames',
+      '--format',
+      'bestaudio/best',
+      '--output',
+      outputTemplate,
+      videoUrl,
+    ],
+    'Falha ao baixar audio com yt-dlp.',
+  );
+}
+
+function runFfmpeg(inputPath, outputPath) {
+  return runCommand(
+    FFMPEG_BIN,
+    [
+      '-y',
+      '-i',
+      inputPath,
+      '-vn',
+      '-codec:a',
+      'libmp3lame',
+      '-q:a',
+      '2',
+      outputPath,
+    ],
+    'Falha ao converter audio com ffmpeg.',
+  );
+}
+
+function runCommand(command, args, fallbackMessage) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+
+    let stderr = '';
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      reject(
+        new Error(`${fallbackMessage} ${error.message}`.trim()),
+      );
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(
+        new Error(`${fallbackMessage} ${stderr.trim()}`.trim()),
+      );
+    });
+  });
+}
+
+function cleanupExpiredJobs() {
+  const maxAgeMs = MAX_JOB_AGE_MINUTES * 60 * 1000;
+  const now = Date.now();
+
+  for (const job of jobs.values()) {
+    const age = now - new Date(job.updatedAt).getTime();
+    if (age < maxAgeMs) {
+      continue;
+    }
+
+    jobs.delete(job.id);
+    if (job.outputPath && !job.retainFile) {
+      fsp.rm(job.outputPath, { force: true }).catch(() => {});
+    }
+  }
+}
+
+async function loadCacheIndex() {
+  try {
+    const raw = await fsp.readFile(CACHE_INDEX_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return;
+    }
+
+    for (const entry of parsed) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+
+      const youtubeId = typeof entry.youtubeId === 'string' ? entry.youtubeId : '';
+      const outputFileName =
+        typeof entry.outputFileName === 'string' ? entry.outputFileName : '';
+      if (!youtubeId || !outputFileName) {
+        continue;
+      }
+
+      const outputPath = path.join(FILES_DIR, outputFileName);
+      try {
+        await fsp.access(outputPath, fs.constants.R_OK);
+      } catch {
+        continue;
+      }
+
+      cacheIndex.set(youtubeId, {
+        youtubeId,
+        outputFileName,
+        contentType:
+          typeof entry.contentType === 'string' && entry.contentType
+            ? entry.contentType
+            : 'audio/mpeg',
+        updatedAt:
+          typeof entry.updatedAt === 'string' && entry.updatedAt
+            ? entry.updatedAt
+            : new Date().toISOString(),
+      });
+    }
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return;
+    }
+    console.error('[download-proxy] failed to load cache index', error);
+  }
+}
+
+async function saveCacheIndex() {
+  const payload = JSON.stringify([...cacheIndex.values()], null, 2);
+  await fsp.writeFile(CACHE_INDEX_PATH, payload, 'utf8');
+}
+
+async function getValidCacheEntry(youtubeId) {
+  const entry = cacheIndex.get(youtubeId);
+  if (!entry) {
+    return null;
+  }
+
+  const outputPath = path.join(FILES_DIR, entry.outputFileName);
+  try {
+    await fsp.access(outputPath, fs.constants.R_OK);
+    return entry;
+  } catch {
+    cacheIndex.delete(youtubeId);
+    await saveCacheIndex();
+    return null;
+  }
+}
+
+function findReusableJob(youtubeId) {
+  for (const job of jobs.values()) {
+    if (
+      job.youtubeId === youtubeId &&
+      (job.status === 'queued' ||
+        job.status === 'processing' ||
+        job.status === 'completed')
+    ) {
+      return job;
+    }
+  }
+
+  return null;
+}
+
+function buildOutputFileName(song, youtubeId) {
+  const safeBaseName = sanitizeFileBaseName(
+    `${song.title || 'track'}-${song.artist || 'unknown'}`,
+  );
+  const safeYoutubeId = sanitizeFileBaseName(youtubeId);
+  return `${safeBaseName}-${safeYoutubeId}.mp3`;
+}
+
+async function readJsonBody(req) {
+  const chunks = [];
+
+  for await (const chunk of req) {
+    chunks.push(Buffer.from(chunk));
+  }
+
+  const raw = Buffer.concat(chunks).toString('utf8').trim();
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new HttpError(400, 'JSON invalido.');
+  }
+}
+
+function sendJson(res, statusCode, payload) {
+  res.writeHead(statusCode, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+  });
+  res.end(JSON.stringify(payload));
+}
+
+function sanitizeFileBaseName(input) {
+  const normalized = String(input || 'track')
+    .normalize('NFKD')
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-_.]+|[-_.]+$/g, '')
+    .toLowerCase();
+
+  return normalized || 'track';
+}
+
+function normalizeErrorMessage(error) {
+  if (error instanceof HttpError) {
+    return error.message;
+  }
+
+  return error instanceof Error && error.message
+    ? error.message
+    : 'Falha no backend de download.';
+}
+
+function logEvent(event, details) {
+  const timestamp = new Date().toISOString();
+  const payload = Object.entries(details || {})
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(' ');
+  console.log(`[download-proxy] ${timestamp} ${event}${payload ? ` ${payload}` : ''}`);
+}
+
+function loadEnv(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return;
+  }
+
+  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    const separator = trimmed.indexOf('=');
+    if (separator <= 0) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separator).trim();
+    const value = trimmed.slice(separator + 1).trim();
+    if (!process.env[key]) {
+      process.env[key] = value;
+    }
+  }
+}
+
+function splitCommandArgs(input) {
+  const value = String(input || '').trim();
+  if (!value) {
+    return [];
+  }
+
+  const parts = value.match(/(?:[^\s"]+|"[^"]*")+/g);
+  if (!parts) {
+    return [];
+  }
+
+  return parts.map((part) => {
+    if (part.startsWith('"') && part.endsWith('"')) {
+      return part.slice(1, -1);
+    }
+    return part;
+  });
+}
+
+class HttpError extends Error {
+  constructor(statusCode, message) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+bootstrap().catch((error) => {
+  console.error('[download-proxy] failed to start', error);
+  process.exitCode = 1;
+});
