@@ -329,7 +329,7 @@ function updateJob(job, patch) {
 async function runYtDlp(youtubeId, outputTemplate, job) {
   const videoUrl = `https://www.youtube.com/watch?v=${youtubeId}`;
   const cookieArgs = ytDlpCookiesPath ? ['--cookies', ytDlpCookiesPath] : [];
-  const formatStrategies = ['bestaudio/best', 'bestaudio', 'ba', 'best'];
+  const formatStrategies = ['bestaudio/best', 'bestaudio', 'ba', 'best', 'bestvideo+bestaudio/best', ''];
   const strategies = [
     {
       name: 'android-web',
@@ -350,11 +350,12 @@ async function runYtDlp(youtubeId, outputTemplate, job) {
   for (const strategy of strategies) {
     for (const format of formatStrategies) {
       try {
+        const formatArgs = format ? ['--format', format] : [];
         logEvent('yt-dlp-attempt', {
           youtubeId,
           jobId: job?.id || 'unknown',
           strategy: strategy.name,
-          format,
+          format: format || 'default',
         });
         await runCommand(
           YT_DLP_BIN,
@@ -381,21 +382,20 @@ async function runYtDlp(youtubeId, outputTemplate, job) {
             '--no-warnings',
             '--restrict-filenames',
             '--no-check-certificates',
-            '--format',
-            format,
+            ...formatArgs,
             '--extractor-args',
             strategy.extractorArgs,
             '--output',
             outputTemplate,
             videoUrl,
           ],
-          `Falha ao baixar audio com yt-dlp [${strategy.name}/${format}].`,
+          `Falha ao baixar audio com yt-dlp [${strategy.name}/${format || 'default'}].`,
         );
         logEvent('yt-dlp-success', {
           youtubeId,
           jobId: job?.id || 'unknown',
           strategy: strategy.name,
-          format,
+          format: format || 'default',
         });
         return;
       } catch (error) {
@@ -404,14 +404,62 @@ async function runYtDlp(youtubeId, outputTemplate, job) {
           youtubeId,
           jobId: job?.id || 'unknown',
           strategy: strategy.name,
-          format,
+          format: format || 'default',
           error: normalizeErrorMessage(error),
         });
       }
     }
   }
 
+  const formatList = await listYtDlpFormats(videoUrl, cookieArgs);
+  if (formatList) {
+    logEvent('yt-dlp-formats', {
+      youtubeId,
+      jobId: job?.id || 'unknown',
+      formats: formatList,
+    });
+  }
+
   throw lastError || new Error('Falha ao baixar audio com yt-dlp.');
+}
+
+async function listYtDlpFormats(videoUrl, cookieArgs) {
+  try {
+    const output = await runCommandCaptureStdout(
+      YT_DLP_BIN,
+      [
+        ...YT_DLP_ARGS,
+        ...cookieArgs,
+        '--user-agent',
+        YT_DLP_USER_AGENT,
+        '--referer',
+        'https://www.youtube.com/',
+        '--add-header',
+        'Accept-Language:en-US,en;q=0.9',
+        '--add-header',
+        'Origin:https://www.youtube.com',
+        '--list-formats',
+        '--no-playlist',
+        '--no-warnings',
+        '--no-check-certificates',
+        videoUrl,
+      ],
+      'Falha ao listar formatos com yt-dlp.',
+    );
+
+    return output
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-15)
+      .join(' | ')
+      .slice(0, 4000);
+  } catch (error) {
+    logEvent('yt-dlp-formats-failed', {
+      error: normalizeErrorMessage(error),
+    });
+    return '';
+  }
 }
 
 async function ensureCookiesFile() {
@@ -478,6 +526,39 @@ function runCommand(command, args, fallbackMessage) {
       reject(
         new Error(`${fallbackMessage} ${stderr.trim()}`.trim()),
       );
+    });
+  });
+}
+
+function runCommandCaptureStdout(command, args, fallbackMessage) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      reject(new Error(`${fallbackMessage} ${error.message}`.trim()));
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim());
+        return;
+      }
+
+      reject(new Error(`${fallbackMessage} ${stderr.trim()}`.trim()));
     });
   });
 }
