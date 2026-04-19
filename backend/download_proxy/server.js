@@ -329,87 +329,85 @@ function updateJob(job, patch) {
 async function runYtDlp(youtubeId, outputTemplate, job) {
   const videoUrl = `https://www.youtube.com/watch?v=${youtubeId}`;
   const cookieArgs = ytDlpCookiesPath ? ['--cookies', ytDlpCookiesPath] : [];
+  const formatStrategies = ['bestaudio/best', 'bestaudio', 'ba', 'best'];
   const strategies = [
     {
       name: 'android-web',
-      args: [
-        '--extractor-args',
-        'youtube:player_client=android,web;player_skip=webpage,configs',
-      ],
+      extractorArgs: 'youtube:player_client=android,web;player_skip=webpage,configs',
     },
     {
       name: 'ios-web',
-      args: [
-        '--extractor-args',
-        'youtube:player_client=ios,web;player_skip=webpage,configs',
-      ],
+      extractorArgs: 'youtube:player_client=ios,web;player_skip=webpage,configs',
     },
     {
       name: 'tv-android-web',
-      args: [
-        '--extractor-args',
-        'youtube:player_client=tv,android,web;player_skip=webpage,configs',
-      ],
+      extractorArgs: 'youtube:player_client=tv,android,web;player_skip=webpage,configs',
     },
   ];
 
   let lastError = null;
 
   for (const strategy of strategies) {
-    try {
-      logEvent('yt-dlp-attempt', {
-        youtubeId,
-        jobId: job?.id || 'unknown',
-        strategy: strategy.name,
-      });
-      await runCommand(
-        YT_DLP_BIN,
-        [
-          ...YT_DLP_ARGS,
-          ...cookieArgs,
-          '--user-agent',
-          YT_DLP_USER_AGENT,
-          '--referer',
-          'https://www.youtube.com/',
-          '--add-header',
-          'Accept-Language:en-US,en;q=0.9',
-          '--add-header',
-          'Origin:https://www.youtube.com',
-          '--extractor-retries',
-          '5',
-          '--fragment-retries',
-          '5',
-          '--retries',
-          '5',
-          '--retry-sleep',
-          '2',
-          '--no-playlist',
-          '--no-warnings',
-          '--restrict-filenames',
-          '--no-check-certificates',
-          '--format',
-          'bestaudio/best',
-          ...strategy.args,
-          '--output',
-          outputTemplate,
-          videoUrl,
-        ],
-        `Falha ao baixar audio com yt-dlp [${strategy.name}].`,
-      );
-      logEvent('yt-dlp-success', {
-        youtubeId,
-        jobId: job?.id || 'unknown',
-        strategy: strategy.name,
-      });
-      return;
-    } catch (error) {
-      lastError = error;
-      logEvent('yt-dlp-retry', {
-        youtubeId,
-        jobId: job?.id || 'unknown',
-        strategy: strategy.name,
-        error: normalizeErrorMessage(error),
-      });
+    for (const format of formatStrategies) {
+      try {
+        logEvent('yt-dlp-attempt', {
+          youtubeId,
+          jobId: job?.id || 'unknown',
+          strategy: strategy.name,
+          format,
+        });
+        await runCommand(
+          YT_DLP_BIN,
+          [
+            ...YT_DLP_ARGS,
+            ...cookieArgs,
+            '--user-agent',
+            YT_DLP_USER_AGENT,
+            '--referer',
+            'https://www.youtube.com/',
+            '--add-header',
+            'Accept-Language:en-US,en;q=0.9',
+            '--add-header',
+            'Origin:https://www.youtube.com',
+            '--extractor-retries',
+            '5',
+            '--fragment-retries',
+            '5',
+            '--retries',
+            '5',
+            '--retry-sleep',
+            '2',
+            '--no-playlist',
+            '--no-warnings',
+            '--restrict-filenames',
+            '--no-check-certificates',
+            '--format',
+            format,
+            '--extractor-args',
+            strategy.extractorArgs,
+            '--output',
+            outputTemplate,
+            videoUrl,
+          ],
+          `Falha ao baixar audio com yt-dlp [${strategy.name}/${format}].`,
+        );
+        logEvent('yt-dlp-success', {
+          youtubeId,
+          jobId: job?.id || 'unknown',
+          strategy: strategy.name,
+          format,
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        logEvent('yt-dlp-retry', {
+          youtubeId,
+          jobId: job?.id || 'unknown',
+          strategy: strategy.name,
+          format,
+          error: normalizeErrorMessage(error),
+        });
+      }
     }
   }
 
