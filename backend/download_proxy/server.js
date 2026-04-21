@@ -26,6 +26,8 @@ const YT_DLP_USER_AGENT =
 const YOUTUBE_COOKIES = process.env.YOUTUBE_COOKIES || '';
 const YOUTUBE_COOKIES_B64 = process.env.YOUTUBE_COOKIES_B64 || '';
 const YOUTUBE_COOKIES_PATH = process.env.YOUTUBE_COOKIES_PATH || '';
+const YOUTUBE_COOKIES_PARTS = collectEnvParts('YOUTUBE_COOKIES_PART_');
+const YOUTUBE_COOKIES_B64_PARTS = collectEnvParts('YOUTUBE_COOKIES_B64_PART_');
 const FFMPEG_BIN = process.env.FFMPEG_BIN || 'ffmpeg';
 const MAX_JOB_AGE_MINUTES = Number(process.env.MAX_JOB_AGE_MINUTES || 60);
 
@@ -469,7 +471,9 @@ async function ensureCookiesFile() {
   }
 
   const rawCookies =
+    decodeBase64Value(YOUTUBE_COOKIES_B64_PARTS) ||
     decodeBase64Value(YOUTUBE_COOKIES_B64) ||
+    normalizeCookiePayload(YOUTUBE_COOKIES_PARTS) ||
     normalizeCookiePayload(YOUTUBE_COOKIES);
 
   if (!rawCookies) {
@@ -479,6 +483,18 @@ async function ensureCookiesFile() {
   const cookiesPath = path.join(RUNTIME_DIR, 'youtube-cookies.txt');
   await fsp.writeFile(cookiesPath, rawCookies, 'utf8');
   return cookiesPath;
+}
+
+function collectEnvParts(prefix) {
+  return Object.entries(process.env)
+    .filter(([key, value]) => key.startsWith(prefix) && value)
+    .sort(([left], [right]) => {
+      const leftIndex = Number(left.slice(prefix.length));
+      const rightIndex = Number(right.slice(prefix.length));
+      return leftIndex - rightIndex;
+    })
+    .map(([, value]) => value)
+    .join('');
 }
 
 function runFfmpeg(inputPath, outputPath) {
