@@ -336,6 +336,14 @@ async function runYtDlp(youtubeId, outputTemplate, job) {
   const cookieArgs = ytDlpCookiesPath ? ['--cookies', ytDlpCookiesPath] : [];
   const formatStrategies = ['bestaudio/best', 'bestaudio', 'ba', 'best', 'bestvideo+bestaudio/best', ''];
   const strategies = [
+    ...(ytDlpCookiesPath
+      ? [
+          {
+            name: 'cookies-default',
+            extractorArgs: '',
+          },
+        ]
+      : []),
     {
       name: 'android-web',
       extractorArgs: 'youtube:player_client=android,web;player_skip=webpage,configs',
@@ -362,6 +370,9 @@ async function runYtDlp(youtubeId, outputTemplate, job) {
           strategy: strategy.name,
           format: format || 'default',
         });
+        const extractorArgs = strategy.extractorArgs
+          ? ['--extractor-args', strategy.extractorArgs]
+          : [];
         await runCommand(
           YT_DLP_BIN,
           [
@@ -388,8 +399,7 @@ async function runYtDlp(youtubeId, outputTemplate, job) {
             '--restrict-filenames',
             '--no-check-certificates',
             ...formatArgs,
-            '--extractor-args',
-            strategy.extractorArgs,
+            ...extractorArgs,
             '--output',
             outputTemplate,
             videoUrl,
