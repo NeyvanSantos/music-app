@@ -101,6 +101,7 @@ async function route(req, res) {
       ok: true,
       activeJobs: activeJobCount,
       totalJobs: jobs.size,
+      cookiesEnabled: Boolean(ytDlpCookiesPath),
     });
   }
 
@@ -740,9 +741,28 @@ function normalizeErrorMessage(error) {
     return error.message;
   }
 
-  return error instanceof Error && error.message
+  const message = error instanceof Error && error.message
     ? error.message
     : 'Falha no backend de download.';
+
+  if (isYoutubeAuthError(message)) {
+    return (
+      'YouTube bloqueou o servidor por verificacao anti-bot. ' +
+      'Configure YOUTUBE_COOKIES_B64 no Railway com cookies exportados do YouTube e reinicie o servico.'
+    );
+  }
+
+  return message;
+}
+
+function isYoutubeAuthError(message) {
+  const normalized = String(message || '').toLowerCase();
+  return (
+    normalized.includes('sign in to confirm') ||
+    normalized.includes('not a bot') ||
+    normalized.includes('--cookies-from-browser') ||
+    normalized.includes('use --cookies')
+  );
 }
 
 function logEvent(event, details) {
