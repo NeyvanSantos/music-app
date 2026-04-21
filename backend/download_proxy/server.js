@@ -35,6 +35,7 @@ const jobs = new Map();
 const cacheIndex = new Map();
 let activeJobCount = 0;
 let ytDlpCookiesPath = '';
+let ytDlpCookiesInfo = null;
 
 async function bootstrap() {
   await Promise.all([
@@ -104,6 +105,7 @@ async function route(req, res) {
       activeJobs: activeJobCount,
       totalJobs: jobs.size,
       cookiesEnabled: Boolean(ytDlpCookiesPath),
+      cookiesInfo: ytDlpCookiesInfo,
     });
   }
 
@@ -482,7 +484,27 @@ async function ensureCookiesFile() {
 
   const cookiesPath = path.join(RUNTIME_DIR, 'youtube-cookies.txt');
   await fsp.writeFile(cookiesPath, rawCookies, 'utf8');
+  ytDlpCookiesInfo = describeCookies(rawCookies);
   return cookiesPath;
+}
+
+function describeCookies(rawCookies) {
+  const lines = String(rawCookies || '').split(/\r?\n/);
+  const cookieLines = lines.filter((line) => line && !line.startsWith('#'));
+  const hasCookie = (name) =>
+    cookieLines.some((line) => new RegExp(`\\b${name}\\b`).test(line));
+
+  return {
+    length: rawCookies.length,
+    lines: lines.length,
+    cookieLines: cookieLines.length,
+    hasSapisiD: hasCookie('SAPISID'),
+    hasSid: hasCookie('SID'),
+    hasSsid: hasCookie('SSID'),
+    hasHsid: hasCookie('HSID'),
+    hasLoginInfo: hasCookie('LOGIN_INFO'),
+    sha256: crypto.createHash('sha256').update(rawCookies).digest('hex').slice(0, 12),
+  };
 }
 
 function collectEnvParts(prefix) {
