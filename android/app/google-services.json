@@ -50,6 +50,35 @@
           ]
         }
       }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:457284911122:android:6435afd885129ae36118cb",
+        "android_client_info": {
+          "package_name": "com.somax.music"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "457284911122-9a09ct7egt23i12c4vuup2sf01d72oj0.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA2EZo4beWSeOAEkgXyNdjfjS09Su74BdU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "457284911122-9a09ct7egt23i12c4vuup2sf01d72oj0.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
     }
   ],
   "configuration_version": "1"
