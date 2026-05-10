@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "457284911122",
+    "firebase_url": "https://appmusicaaa-default-rtdb.firebaseio.com",
     "project_id": "appmusicaaa",
     "storage_bucket": "appmusicaaa.firebasestorage.app"
   },
@@ -19,6 +20,14 @@
           "android_info": {
             "package_name": "com.example.music_app",
             "certificate_hash": "3dc5de184bddeaa84756616fb06c0ba28df71454"
+          }
+        },
+        {
+          "client_id": "457284911122-6p4bauqae7483empf1c6f1c15gth68a0.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.music_app",
+            "certificate_hash": "a348fba2ba5c28f3ace66ae0fda382144cac172e"
           }
         },
         {
