@@ -1,4 +1,4 @@
-package com.example.music_app
+package com.somax.music
 
 import android.Manifest
 import android.app.DownloadManager
